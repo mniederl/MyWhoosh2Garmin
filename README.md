@@ -1,6 +1,6 @@
-# myWhoosh2Garmin
+<h1 align="center" id="title">myWhoosh2Garmin</h1>
 
-## Features
+## 🧐 Features
 
 * Finds the `.fit` files from your MyWhoosh installation.
 * Fixes missing power and heart rate averages.
@@ -9,7 +9,7 @@
 * Uploads the fixed `.fit` file to Garmin Connect.
 * Renames uploaded Garmin activities from MyWhoosh custom workout metadata when available.
 
-## Installation Steps
+## 🛠️ Installation Steps
 
 1. Download `myWhoosh2Garmin.py` and `garmin_browser_login.py` to your filesystem to a folder of your choosing.
 
@@ -91,7 +91,7 @@ Example output:
 
 9. Or see below to automate the process.
 
-## Automation Tips
+## ℹ️ Automation Tips
 
 What if you want to automate the whole process:
 
@@ -206,7 +206,7 @@ Write-Host "mywhoosh has finished, running Python script..."
 python "C:\Path\to\myWhoosh2Garmin.py"
 ```
 
-## Built With
+## 💻 Built With
 
 Technologies used in the project:
 
