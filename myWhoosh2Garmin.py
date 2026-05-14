@@ -20,6 +20,7 @@ import subprocess
 import sys
 import logging
 import re
+import argparse
 from typing import List
 import tkinter as tk
 from tkinter import filedialog
@@ -120,8 +121,11 @@ try:
     from garth.exc import GarthException, GarthHTTPError
     from fit_tool.fit_file import FitFile
     from fit_tool.fit_file_builder import FitFileBuilder
-    from fit_tool.profile.messages.file_creator_message import (
-        FileCreatorMessage
+    from fit_tool.profile.messages.device_info_message import (
+        DeviceInfoMessage
+    )
+    from fit_tool.profile.messages.file_id_message import (
+        FileIdMessage
     )
     from fit_tool.profile.messages.record_message import (
         RecordMessage,
@@ -129,6 +133,7 @@ try:
     )
     from fit_tool.profile.messages.session_message import SessionMessage
     from fit_tool.profile.messages.lap_message import LapMessage
+    from fit_tool.profile.profile_type import DeviceIndex, Manufacturer
 except ImportError as e:
     logger.error(f"Error importing modules: {e}")
 
@@ -137,6 +142,21 @@ TOKENS_PATH = SCRIPT_DIR / '.garth'
 FILE_DIALOG_TITLE = "MyWhoosh2Garmin"
 # Fix for https://github.com/JayQueue/MyWhoosh2Garmin/issues/2
 MYWHOOSH_PREFIX_WINDOWS = "MyWhooshTechnologyService." 
+GARMIN_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+def configure_garth_for_garmin_auth() -> None:
+    """
+    Garmin started blocking garth's mobile-looking default User-Agent.
+    Use a browser User-Agent for Garmin auth/API calls while keeping garth local.
+    """
+    garth.client.sess.headers.update({
+        "User-Agent": GARMIN_BROWSER_USER_AGENT
+    })
 
 
 def get_fitfile_location() -> Path:
@@ -251,12 +271,20 @@ def get_credentials_for_garmin():
     password = getpass("Password: ")
     logger.info("Authenticating...")
     try:
+        configure_garth_for_garmin_auth()
         garth.login(username, password)
         garth.save(TOKENS_PATH)
         print()
         logger.info("Successfully authenticated!")
-    except GarthHTTPError:
-        logger.info("Wrong credentials. Please check username and password.")
+    except GarthHTTPError as e:
+        response = getattr(garth.client, "last_resp", None)
+        status = getattr(response, "status_code", None)
+        logger.info(
+            "Garmin authentication failed%s. Please check credentials, MFA, "
+            "or Garmin's current Cloudflare/auth state.",
+            f" with HTTP {status}" if status else "",
+        )
+        logger.debug(f"Garth authentication error: {e}.")
         sys.exit(1)
 
 
@@ -273,6 +301,7 @@ def authenticate_to_garmin():
         Exits with status 1 if authentication fails.
     """
     try:
+        configure_garth_for_garmin_auth()
         if TOKENS_PATH.exists():
             garth.resume(TOKENS_PATH)
             try:
@@ -329,7 +358,38 @@ def reset_values() -> tuple[List[int], List[int], List[int], List[int]]:
     return  [], [], [], []
 
 
-def cleanup_fit_file(fit_file_path: Path, new_file_path: Path) -> None:
+def fix_device_metadata(message: object) -> None:
+    """Make MyWhoosh FIT creator metadata closer to Zwift's exported FIT files."""
+    if isinstance(message, FileIdMessage):
+        message.manufacturer = Manufacturer.ZWIFT.value
+        message.product = 0
+        message.serial_number = 0
+    elif isinstance(message, DeviceInfoMessage):
+        message.manufacturer = Manufacturer.ZWIFT.value
+        message.product = 0
+        message.device_index = DeviceIndex.CREATOR.value
+        if not message.software_version:
+            message.software_version = 5.72
+
+
+def build_zwift_device_info(timestamp=None) -> DeviceInfoMessage:
+    device_info = DeviceInfoMessage()
+    device_info.timestamp = timestamp
+    device_info.device_index = DeviceIndex.CREATOR.value
+    device_info.device_type = 0
+    device_info.manufacturer = Manufacturer.ZWIFT.value
+    device_info.product = 0
+    device_info.serial_number = 3313379353
+    device_info.software_version = 5.72
+    device_info.hardware_version = 0
+    device_info.cum_operating_time = 0
+    device_info.battery_voltage = 0.0
+    device_info.battery_status = 0
+    return device_info
+
+
+def cleanup_fit_file(fit_file_path: Path, new_file_path: Path,
+                     fix_device: bool = False) -> None:
     """
     Clean up the FIT file by processing and removing unnecessary fields.
     Also, calculate average values for cadence, power, and heart rate.
@@ -344,9 +404,17 @@ def cleanup_fit_file(fit_file_path: Path, new_file_path: Path) -> None:
     builder = FitFileBuilder()
     fit_file = FitFile.from_file(str(fit_file_path))
     lap_values, cadence_values, power_values, heart_rate_values = reset_values()
+    has_device_info = False
+    first_timestamp = None
 
     for record in fit_file.records:
         message = record.message
+        if fix_device:
+            fix_device_metadata(message)
+        if isinstance(message, DeviceInfoMessage):
+            has_device_info = True
+        if first_timestamp is None and hasattr(message, "timestamp"):
+            first_timestamp = getattr(message, "timestamp", None)
         if isinstance(message, LapMessage):
             append_value(lap_values, message, "start_time")
             append_value(lap_values, message, "total_elapsed_time")
@@ -372,8 +440,12 @@ def cleanup_fit_file(fit_file_path: Path, new_file_path: Path) -> None:
                 message.avg_heart_rate = calculate_avg(heart_rate_values)
             lap_values, cadence_values, power_values, heart_rate_values = reset_values()
         builder.add(message)
+    if fix_device and not has_device_info:
+        builder.add(build_zwift_device_info(first_timestamp))
     builder.build().to_file(str(new_file_path))
     logger.info(f"Cleaned-up file saved as {SCRIPT_DIR}/{new_file_path.name}")
+    if fix_device:
+        logger.info("Applied Zwift-like FIT file_id/device_info metadata.")
 
 
 def get_most_recent_fit_file(fitfile_location: Path) -> Path:
@@ -395,7 +467,8 @@ def generate_new_filename(fit_file: Path) -> str:
     return f"{fit_file.stem}_{timestamp}.fit"
 
 
-def cleanup_and_save_fit_file(fitfile_location: Path) -> Path:
+def cleanup_and_save_fit_file(fitfile_location: Path,
+                              fix_device: bool = False) -> Path:
     """
     Clean up the most recent .fit file in a directory and save it 
     with a timestamped filename.
@@ -431,7 +504,7 @@ def cleanup_and_save_fit_file(fitfile_location: Path) -> Path:
     logger.info(f"Cleaning up {new_file_path}.")
 
     try:
-        cleanup_fit_file(fit_file, new_file_path)  
+        cleanup_fit_file(fit_file, new_file_path, fix_device=fix_device)  
         logger.info(f"Successfully cleaned {fit_file.name} "
                     f"and saved it as {new_file_path.name}.")
         return new_file_path
@@ -461,6 +534,18 @@ def upload_fit_file_to_garmin(new_file_path: Path):
         logger.info("Duplicate activity found on Garmin Connect.")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Clean up the latest MyWhoosh FIT file and upload it to Garmin."
+    )
+    parser.add_argument(
+        "--fix-device",
+        action="store_true",
+        help="Set Zwift-like FIT file_id metadata and add/fix creator device_info.",
+    )
+    return parser.parse_args()
+
+
 def main():
     """
     Main function to authenticate to Garmin, clean and save the FIT file, 
@@ -469,8 +554,12 @@ def main():
     Returns:
         None
     """
+    args = parse_args()
     authenticate_to_garmin()
-    new_file_path = cleanup_and_save_fit_file(FITFILE_LOCATION)
+    new_file_path = cleanup_and_save_fit_file(
+        FITFILE_LOCATION,
+        fix_device=args.fix_device,
+    )
     if new_file_path:
         upload_fit_file_to_garmin(new_file_path)
 
