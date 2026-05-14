@@ -1,84 +1,86 @@
-<h1 align="center" id="title">myWhoosh2Garmin</h1>
+# myWhoosh2Garmin
 
-<h2>🧐Features</h2>
+## Features
 
-*   Finds the .fit files from your MyWhoosh installation.
-*   Fix the missing power & heart rate averages.
-*   Removes the temperature.
-*   Create a backup file to a folder you select.
-*   Uploads the fixed .fit file to Garmin Connect.
+* Finds the `.fit` files from your MyWhoosh installation.
+* Fixes missing power and heart rate averages.
+* Removes temperature.
+* Creates a backup file to a folder you select.
+* Uploads the fixed `.fit` file to Garmin Connect.
+* Renames uploaded Garmin activities from MyWhoosh custom workout metadata when available.
 
-<h2>🛠️ Installation Steps:</h2>
+## Installation Steps
 
-<p>1. Download myWhoosh2Garmin.py to your filesystem to a folder or your choosing.</p>
+1. Download `myWhoosh2Garmin.py` and `garmin_browser_login.py` to your filesystem to a folder of your choosing.
 
-<p>2. Go to the folder where you downloaded the script in a shell.</p>
+2. Go to the folder where you downloaded the scripts in a shell.
 
-- <b>MacOS:</b> Terminal of your choice. 
-- <b>Windows:</b> Start > Run > cmd or Start > Run > powershell
+* **MacOS:** Terminal of your choice.
+* **Windows:** Start > Run > cmd or Start > Run > powershell
 
-<p>3. Install `pipenv` (if not already installed):</p>
+3. Install `pipenv` if not already installed:
 
-```
+```shell
 pip3 install pipenv
 or
 pip install pipenv
 ```
-<p>4. Install dependencies in a virtual envioronment:</p>
 
-```
+4. Install dependencies in a virtual environment:
+
+```shell
 pipenv install
 ```
 
-<p>5. Activate the virtual environment:</p>
+5. Activate the virtual environment:
 
-```
+```shell
 pipenv shell
 ```
 
-<p>5. Run the Garmin browser login once:</p>
+6. Run the Garmin browser login once:
 
-```
+```shell
 python3 garmin_browser_login.py
 or
 python garmin_browser_login.py
 ```
 
-<p>This opens a Chromium browser window. Log in to Garmin Connect normally, including MFA if prompted. The script saves reusable Garmin tokens to the local <code>.garth</code> directory, because direct username/password login through Garth no longer reliably works with Garmin's current auth flow.</p>
-  
-<p>6. Choose your backup folder.</p>
+This opens a Chromium browser window. Log in to Garmin Connect normally, including MFA if prompted. The script saves reusable Garmin tokens to the local `.garth` directory, because direct username/password login through Garth no longer reliably works with Garmin's current auth flow.
 
-<h3>MacOS</h3>
+7. Choose your backup folder.
+
+### MacOS
 
 ![image](https://github.com/user-attachments/assets/2c6c1072-bacf-4f0c-8861-78f62bf51648)
 
-
-<h3>Windows</h3>
-
+### Windows
 
 ![image](https://github.com/user-attachments/assets/d1540291-4e6d-488e-9dcf-8d7b68651103)
 
-<p>7. Run the script when you're done riding or running.</p>
+8. Run the script when you're done riding or running.
 
-```
+```shell
 python3 myWhoosh2Garmin.py
 or
 python myWhoosh2Garmin.py
 ```
 
-<p>Optional: use Zwift-like FIT device metadata before upload:</p>
+Optional: use Zwift-like FIT device metadata before upload:
 
-```
+```shell
 python3 myWhoosh2Garmin.py --fix-device
 or
 python myWhoosh2Garmin.py --fix-device
 ```
 
-<p>This changes the exported FIT creator metadata to look more like a Zwift virtual ride by setting the FIT manufacturer to Zwift and adding creator device information.</p>
+This changes the exported FIT creator metadata to look more like a Zwift virtual ride by setting the FIT manufacturer to Zwift and adding creator device information.
 
-<p>Example output:</p>
+After uploading, the script tries to rename the Garmin activity automatically. It reads the MyWhoosh session UUID from the FIT file, loads the matching cached custom workout JSON, and renames the Garmin activity to `MyWhoosh - <workout name>`. It only updates an activity when the Garmin activity matches the FIT start time, duration, and distance.
 
-```
+Example output:
+
+```text
 2024-11-21 10:08:37,107 Checking for .fit files in directory: <YOUR_MYWHOOSH_DIR_WITH_FITFILES>.
 2024-11-21 10:08:37,107 Found the most recent .fit file: MyNewActivity-3.8.5.fit.
 2024-11-21 10:08:37,107 Cleaning up <YOUR_BACKUP_FOLDER>yNewActivity-3.8.5_2024-11-21_100837.fit.
@@ -87,12 +89,13 @@ python myWhoosh2Garmin.py --fix-device
 2024-11-21 10:08:38,408 Duplicate activity found on Garmin Connect.
 ```
 
-<p>(9. Or see below to automate the process)</p>
+9. Or see below to automate the process.
 
-<h2>ℹ️ Automation tips</h2> 
+## Automation Tips
 
 What if you want to automate the whole process:
-<h3>MacOS</h3>
+
+### MacOS
 
 PowerShell on MacOS (Verified & works)
 
@@ -105,7 +108,7 @@ brew install powershell/tap/powershell
 ```powershell
 # Define the JSON config file path
 $configFile = "$PSScriptRoot\mywhoosh_config.json"
-$myWhooshApp = "myWhoosh Indoor Cycling App.app"
+$myWhooshApp = "MyWhoosh Indoor Cycling App.app"
 
 # Check if the JSON file exists and read the stored path
 if (Test-Path $configFile) {
@@ -154,9 +157,10 @@ AppleScript (need to test further)
 TODO: needs more work
 ```
 
-<h3>Windows</h3>
+### Windows
 
-Windows .ps1 (PowerShell) file (Untested on Windows)
+Windows `.ps1` (PowerShell) file (Untested on Windows)
+
 ```powershell
 # Define the JSON config file path
 $configFile = "$PSScriptRoot\mywhoosh_config.json"
@@ -202,11 +206,11 @@ Write-Host "mywhoosh has finished, running Python script..."
 python "C:\Path\to\myWhoosh2Garmin.py"
 ```
 
-<h2>💻 Built with</h2>
+## Built With
 
 Technologies used in the project:
 
 * Neovim
-*   <a href="https://github.com/matin/garth">Garth</a>
-*   tKinter
-*   <a href="https://bitbucket.org/stagescycling/fit_tool/src/main/">Fit\_tool</a>
+* [Garth](https://github.com/matin/garth)
+* tKinter
+* [Fit_tool](https://bitbucket.org/stagescycling/python_fit_tool/src/main/)

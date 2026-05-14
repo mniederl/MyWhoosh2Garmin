@@ -21,10 +21,11 @@ import sys
 import logging
 import re
 import argparse
+import time
 from typing import List
 import tkinter as tk
 from tkinter import filedialog
-from datetime import datetime
+from datetime import datetime, UTC
 from getpass import getpass
 from pathlib import Path
 import importlib.util
@@ -219,6 +220,22 @@ def get_fitfile_location() -> Path:
         return Path()
 
 
+def get_custom_workout_location() -> Path:
+    """
+    Get MyWhoosh's cached custom workout directory.
+    """
+    try:
+        return (
+            FITFILE_LOCATION.parents[1]
+            / "Saved"
+            / "PersistentDownloadDir"
+            / "DefaultCache"
+            / "CustomWorkouts"
+        )
+    except IndexError:
+        return Path()
+
+
 def get_backup_path(json_file=json_file_path) -> Path:
     """
     This function checks if a backup path already exists in a JSON file.
@@ -255,6 +272,7 @@ def get_backup_path(json_file=json_file_path) -> Path:
     return Path(backup_path)
 
 FITFILE_LOCATION = get_fitfile_location()
+CUSTOM_WORKOUT_LOCATION = get_custom_workout_location()
 BACKUP_FITFILE_LOCATION = get_backup_path()
 
 def get_credentials_for_garmin():
@@ -356,6 +374,61 @@ def reset_values() -> tuple[List[int], List[int], List[int], List[int]]:
         (cadence, power, and heart rate).
     """
     return  [], [], [], []
+
+
+def get_developer_field_value(message: object, field_name: str):
+    for field in getattr(message, "developer_fields", []):
+        if getattr(field, "name", None) != field_name:
+            continue
+        values = getattr(field, "encoded_values", [])
+        return values[0] if values else None
+    return None
+
+
+def get_fit_session_metadata(fit_file_path: Path) -> dict:
+    fit_file = FitFile.from_file(str(fit_file_path))
+    for record in fit_file.records:
+        message = record.message
+        if not isinstance(message, SessionMessage):
+            continue
+        start_time = getattr(message, "start_time", None)
+        return {
+            "uuid": get_developer_field_value(message, "UUID"),
+            "title": get_developer_field_value(message, "Title"),
+            "start_time": (
+                datetime.fromtimestamp(start_time / 1000, UTC).replace(tzinfo=None)
+                if start_time else None
+            ),
+            "duration": getattr(message, "total_timer_time", None),
+            "distance": getattr(message, "total_distance", None),
+        }
+    return {}
+
+
+def get_workout_name_from_fit(fit_file_path: Path) -> str | None:
+    metadata = get_fit_session_metadata(fit_file_path)
+    workout_uuid = metadata.get("uuid")
+    if not workout_uuid:
+        return None
+
+    workout_id = str(workout_uuid).split("_", 1)[0]
+    if not workout_id:
+        return None
+
+    workout_path = CUSTOM_WORKOUT_LOCATION / f"Workout-{workout_id}.json"
+    if not workout_path.exists():
+        logger.info(f"No custom workout JSON found at {workout_path}.")
+        return None
+
+    try:
+        with open(workout_path, "r", encoding="utf-8") as f:
+            workout = json.load(f)
+    except json.JSONDecodeError as e:
+        logger.info(f"Could not parse custom workout JSON {workout_path}: {e}.")
+        return None
+
+    workout_name = workout.get("Name")
+    return f"MyWhoosh - {workout_name}" if workout_name else None
 
 
 def fix_device_metadata(message: object) -> None:
@@ -513,6 +586,67 @@ def cleanup_and_save_fit_file(fitfile_location: Path,
         return Path()
 
 
+def parse_garmin_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def find_uploaded_activity_id(fit_file_path: Path, attempts: int = 10,
+                              delay_seconds: int = 3) -> int | None:
+    metadata = get_fit_session_metadata(fit_file_path)
+    fit_start = metadata.get("start_time")
+    fit_duration = metadata.get("duration")
+    fit_distance = metadata.get("distance")
+    if not fit_start or not fit_duration:
+        logger.info("Cannot match Garmin activity without FIT start time and duration.")
+        return None
+
+    for attempt in range(1, attempts + 1):
+        activities = garth.client.connectapi(
+            "/activitylist-service/activities/search/activities",
+            params={"limit": 20, "start": 0},
+        )
+        for activity in activities:
+            activity_start = parse_garmin_datetime(activity.get("startTimeGMT"))
+            activity_duration = activity.get("duration")
+            activity_distance = activity.get("distance")
+            if not activity_start or activity_duration is None:
+                continue
+
+            start_matches = abs((activity_start - fit_start).total_seconds()) <= 5
+            duration_matches = abs(float(activity_duration) - float(fit_duration)) <= 5
+            distance_matches = (
+                fit_distance is None or
+                activity_distance is None or
+                abs(float(activity_distance) - float(fit_distance)) <= 25
+            )
+            if start_matches and duration_matches and distance_matches:
+                return activity.get("activityId")
+
+        if attempt < attempts:
+            time.sleep(delay_seconds)
+
+    logger.info("Could not find uploaded activity in Garmin recent activities.")
+    return None
+
+
+def rename_garmin_activity(activity_id: int, activity_name: str) -> None:
+    payload = {
+        "activityId": activity_id,
+        "activityName": activity_name,
+    }
+    garth.client.connectapi(
+        f"/activity-service/activity/{activity_id}",
+        method="PUT",
+        json=payload,
+    )
+    logger.info(f"Renamed Garmin activity {activity_id} to '{activity_name}'.")
+
+
 def upload_fit_file_to_garmin(new_file_path: Path):
     """
     Upload a .fit file to Garmin using the Garth client.
@@ -525,13 +659,30 @@ def upload_fit_file_to_garmin(new_file_path: Path):
     """
     try:
         if new_file_path and new_file_path.exists():
+            activity_name = get_workout_name_from_fit(new_file_path)
             with open(new_file_path, "rb") as f:
                 uploaded = garth.client.upload(f)
                 logger.debug(uploaded)
+            rename_matching_garmin_activity(new_file_path, activity_name)
         else:
             logger.info(f"Invalid file path: {new_file_path}.")
     except GarthHTTPError:
         logger.info("Duplicate activity found on Garmin Connect.")
+        if new_file_path and new_file_path.exists():
+            activity_name = get_workout_name_from_fit(new_file_path)
+            rename_matching_garmin_activity(new_file_path, activity_name)
+
+
+def rename_matching_garmin_activity(fit_file_path: Path,
+                                    activity_name: str | None) -> None:
+    if not activity_name:
+        logger.info("No custom workout name found for Garmin activity rename.")
+        return
+    activity_id = find_uploaded_activity_id(fit_file_path)
+    if not activity_id:
+        logger.info("Skipping Garmin rename because no exact matching activity was found.")
+        return
+    rename_garmin_activity(activity_id, activity_name)
 
 
 def parse_args() -> argparse.Namespace:
