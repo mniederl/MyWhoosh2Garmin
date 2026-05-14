@@ -36,13 +36,15 @@ pipenv install
 pipenv shell
 ```
 
-<p>5. Run the script:</p>
+<p>5. Run the Garmin browser login once:</p>
 
 ```
-python3 myWhoosh2Garmin.py
+python3 garmin_browser_login.py
 or
-python myWhoosh2Garmin.py
+python garmin_browser_login.py
 ```
+
+<p>This opens a Chromium browser window. Log in to Garmin Connect normally, including MFA if prompted. The script saves reusable Garmin tokens to the local <code>.garth</code> directory, because direct username/password login through Garth no longer reliably works with Garmin's current auth flow.</p>
   
 <p>6. Choose your backup folder.</p>
 
@@ -56,18 +58,25 @@ python myWhoosh2Garmin.py
 
 ![image](https://github.com/user-attachments/assets/d1540291-4e6d-488e-9dcf-8d7b68651103)
 
-<p>7. Enter your Garmin Connect credentials</p>
+<p>7. Run the script when you're done riding or running.</p>
 
 ```
-2024-11-21 10:08:04,014 No existing session. Please log in.
-Username: <YOUR_EMAIL>
-Password:
-2024-11-21 10:08:33,545 Authenticating...
-
-2024-11-21 10:08:37,107 Successfully authenticated!
+python3 myWhoosh2Garmin.py
+or
+python myWhoosh2Garmin.py
 ```
 
-<p>8. Run the script when you're done riding or running.</p>
+<p>Optional: use Zwift-like FIT device metadata before upload:</p>
+
+```
+python3 myWhoosh2Garmin.py --fix-device
+or
+python myWhoosh2Garmin.py --fix-device
+```
+
+<p>This changes the exported FIT creator metadata to look more like a Zwift virtual ride by setting the FIT manufacturer to Zwift and adding creator device information.</p>
+
+<p>Example output:</p>
 
 ```
 2024-11-21 10:08:37,107 Checking for .fit files in directory: <YOUR_MYWHOOSH_DIR_WITH_FITFILES>.
